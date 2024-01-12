@@ -104,27 +104,37 @@ def categorize_duration(duration):
         return 2
 
 def generate_category_of_Campaign(row):
-    campaign_types = ['Snapchat', 'Instagram', 'YouTube', 'Facebook', 'TikTok']
-    if row in campaign_types:
-        return campaign_types.index(row) + 1
+    if row['Campaign_Type'] == 'Snapchat':
+        return 1
+    elif row['Campaign_Type'] == 'Instagram':
+        return 2
+    elif row['Campaign_Type'] == 'YouTube':
+        return 3
+    elif row['Campaign_Type'] == 'Facebook':
+        return 4
+    elif row['Campaign_Type'] == 'TikTok':
+        return 5
     else:
         return 'Unknown'
 
+
 def generate_category_of_Age(row):
-    age_groups = ['45-54', '18-24', '25-34', '35-44', '55-64']
-    if row in age_groups:
-        return age_groups.index(row) + 1
+    if row['Audience_Age_Group'] == '45-54':
+        return 1
+    elif row['Audience_Age_Group'] == '18-24':
+        return 2
+    elif row['Audience_Age_Group'] == '25-34':
+        return 3
+    elif row['Audience_Age_Group'] == '35-44':
+        return 4
+    elif row['Audience_Age_Group'] == '55-64':
+        return 5
     else:
         return 'Unknown'
 
 def one_hot_encode(df, cols_to_encode):
     df[cols_to_encode] = df[cols_to_encode].astype(str)
     return pd.get_dummies(df, columns=cols_to_encode)
-
-def split_data(df, target_col, test_size, random_state):
-    X = df.drop(target_col, axis=1)
-    y = df[target_col]
-    return train_test_split(X, y, test_size=test_size, random_state=random_state)
 
 def train_model(X_train, y_train):
     return LinearRegression().fit(X_train, y_train)
@@ -173,25 +183,25 @@ def predict_model(model, X_val):
 def calculate_rmse(y_val, y_pred):
     return np.sqrt(mean_squared_error(y_val, y_pred))
 
-def objective(trial):
-    params = {
-        'objective': 'regression',
-        'metric': 'rmse',
-        'boosting_type': 'gbdt',
-        'num_leaves': trial.suggest_int('num_leaves', 2, 100),
-        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1),
-        'feature_fraction': trial.suggest_float('feature_fraction', 0.1, 1.0),
-        'bagging_fraction': trial.suggest_float('bagging_fraction', 0.1, 1.0),
-        'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
-        'n_estimators': trial.suggest_int('n_estimators', 50, 200),
-    }
+# def objective(trial):
+#     params = {
+#         'objective': 'regression',
+#         'metric': 'rmse',
+#         'boosting_type': 'gbdt',
+#         'num_leaves': trial.suggest_int('num_leaves', 2, 100),
+#         'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1),
+#         'feature_fraction': trial.suggest_float('feature_fraction', 0.1, 1.0),
+#         'bagging_fraction': trial.suggest_float('bagging_fraction', 0.1, 1.0),
+#         'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
+#         'n_estimators': trial.suggest_int('n_estimators', 50, 200),
+#     }
     
-    model = create_model(params)
-    model = fit_model(model, X_train, y_train)
-    y_pred = predict_model(model, X_val)
-    rmse = calculate_rmse(y_val, y_pred)
+#     model = create_model(params)
+#     model = fit_model(model, X_train, y_train)
+#     y_pred = predict_model(model, X_val)
+#     rmse = calculate_rmse(y_val, y_pred)
     
-    return rmse
+#     return rmse
 
 
 def main():
@@ -218,25 +228,75 @@ def main():
     
     scaler = MinMaxScaler(feature_range=(1, 10))
     scale_column(df, 'Audience_Size', scaler)
-    categorize_column(df, 'Duration', categorize_duration)
-    categorize_column(df, 'Campaign_Type', generate_category_of_Campaign)
-    categorize_column(df, 'Audience_Age_Group', generate_category_of_Age)
+    df['Month_Of_Duration'] = df['Duration'].apply(categorize_duration)
+    df['Category_of_Campaign_Type'] = df.apply(generate_category_of_Campaign, axis=1)
+    df['Category_of_Audience_Age'] = df.apply(generate_category_of_Age, axis=1)
+
+
+    numerical_values = ['Budget', 'Audience_Size', 'Engagement_Rate']
+    poly = PolynomialFeatures(degree=2, interaction_only=True, include_bias=False)
+    interaction_data = poly.fit_transform(df[numerical_values])
+
+
+    interaction_features = poly.get_feature_names_out(input_features=numerical_values)
+    interaction_df = pd.DataFrame(interaction_data, columns=interaction_features)
+    df = pd.merge(df, interaction_df, on='Budget', how='left')
+
+    #cols_to_encode = ['Budget_binned', 'Audience_Size_binned', 'Engagement_Rate_binned','Campaign_Type_Audience_Age_Group']
+    #df = pd.get_dummies(df, columns=['Budget_binned'])
+    #!TODO: ERRRO = df = one_hot_encode(df, cols_to_encode)
+    #df = one_hot_encode(df, cols_to_encode)
+    
+    df['Duration_in_weeks'] = df['Duration'] / 7
+    df['Duration_in_months'] = df['Duration'] / 30
+    df['Duration_fraction_of_year'] = df['Duration'] / 365
+
+    # binned features
+    df['Budget_binned'] = pd.cut(df['Budget'], bins=10)
+    df['Audience_Size_binned'] = pd.cut(df['Audience_Size_x'], bins=10)
+    df['Engagement_Rate_binned'] = pd.cut(df['Engagement_Rate_x'], bins=10)
+
+    # log 
+    df['Budget_log'] = np.log(df['Budget'])
+    df['Audience_Size_log'] = np.log(df['Audience_Size_x'])
+    df['Engagement_Rate_log'] = np.log(df['Engagement_Rate_x'])
+
+    # Interaction between categorical variables
+    df['Campaign_Type_Audience_Age_Group'] = df['Campaign_Type'] + "_" + df['Audience_Age_Group']
+
+    # ^2
+    df['Budget_squared'] = df['Budget'] ** 2
+    df['Audience_Size_squared'] = df['Audience_Size_x'] ** 2
+    df['Engagement_Rate_squared'] = df['Engagement_Rate_x'] ** 2
+
+    # ^3
+    df['Budget_cubed'] = df['Budget'] ** 3
+    df['Audience_Size_cubed'] = df['Audience_Size_x'] ** 3
+    df['Engagement_Rate_cubed'] = df['Engagement_Rate_x'] ** 3
+
+
+    df['Budget_inverse'] = 1 / df['Budget']
+    df['Audience_Size_inverse'] = 1 / df['Audience_Size_x']
+    df['Engagement_Rate_inverse'] = 1 / df['Engagement_Rate_x']
+    df.drop(['Campaign_Type','Audience_Age_Group'],axis=1,inplace=True)
 
     cols_to_encode = ['Budget_binned', 'Audience_Size_binned', 'Engagement_Rate_binned','Campaign_Type_Audience_Age_Group']
-    print(df.columns)
-    df['Budget_binned'] = pd.cut(df['Budget'], bins=3, labels=False)
-    df = pd.get_dummies(df, columns=['Budget_binned'])
-    #!TODO: ERRRO = df = one_hot_encode(df, cols_to_encode)
-    X_train, X_val, y_train, y_val = split_data(df, 'Conversion_Rate', 0.2, 42)
-    model = train_model(X_train, y_train)
-    evaluate_model(model, X_val, y_val)
+    df[cols_to_encode] = df[cols_to_encode].astype(str)
+    df = pd.get_dummies(df, columns=cols_to_encode)
+
+    X = df.drop('Conversion_Rate', axis=1)
+    y = df['Conversion_Rate']
+
+
+    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = LinearRegression().fit(X_train, y_train)
+    y_pred = model.predict(X_val)
+    print(f'RMSE: {np.sqrt(mean_squared_error(y_val, y_pred))}')
+    print(f'MAE: {mean_absolute_error(y_val, y_pred)}')
     cross_validate_model(model, X, y, 5, make_scorer(mean_squared_error))
     plot_residuals(y_val, model.predict(X_val))
     plot_feature_importances(model, X)
     study = optuna.create_study(direction='minimize')
-    study.optimize(objective, n_trials=1)
-    print(f'Best parameters: {study.best_params}')
-
 
 if __name__ == "__main__":
     main()
